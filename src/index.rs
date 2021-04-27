@@ -1,42 +1,45 @@
 use std::{io, iter};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::table_trait::TableTrait;
 use crate::table::Table;
 
 
 #[derive(Debug, Copy, Clone)]
-pub struct Index<T> {
+pub struct Index {
     left: usize,
     right: usize,
-    value: T,
+    hash: u64,
 }
 
 
-impl<T: Copy> TableTrait for Index<T> {}
+impl TableTrait for Index {}
 
 
-impl<'a, T: 'a + Copy + Clone + PartialOrd> Index<T> {
-    fn new(value: &T) -> Self {
+impl<'a> Index {
+    fn new(hash: u64) -> Self {
         Self {
             left: 0,
             right: 0,
-            value: value.clone(),
+            hash: hash,
         }
     }
 
-    pub fn add(
+    pub fn add<T: Hash>(
                 table: &Table,
                 value: &T
             ) -> Result<usize, io::Error> {
-        let record = Self::new(value);
+        let hash = Self::_hash_value(value);
+        let record = Self::new(hash);
         let record_id = record.insert(table)?;
-        Self::_bind(table, value, record_id)?;
+        Self::_bind(table, hash, record_id)?;
         Ok(record_id)
     }
 
     // TODO: fn add_many
 
-    pub fn search_one(
+    pub fn search_one<T: Hash>(
                 table: &Table,
                 value: &T
             ) -> Result<usize, io::Error> {
@@ -46,10 +49,11 @@ impl<'a, T: 'a + Copy + Clone + PartialOrd> Index<T> {
         }
     }
 
-    pub fn search_many(
+    pub fn search_many<T: Hash>(
                 table: &'a Table,
                 value: &'a T
             ) -> Box<dyn Iterator<Item = usize> + 'a> {
+        let hash = Self::_hash_value(value);
         let mut id = if table.empty() { 0 } else { 1 };
 
         Box::new(iter::from_fn(move || {
@@ -58,11 +62,11 @@ impl<'a, T: 'a + Copy + Clone + PartialOrd> Index<T> {
             while id > 0 {
                 let rec = Self::get(table, id).unwrap();
 
-                if *value < rec.value {
+                if hash < rec.hash {
                     id = rec.left;
 
                 } else {
-                    if *value == rec.value {
+                    if hash == rec.hash {
                         result = Some(id);
                     }
 
@@ -77,8 +81,14 @@ impl<'a, T: 'a + Copy + Clone + PartialOrd> Index<T> {
         }))
     }
 
+    fn _hash_value<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
     fn _bind(
-                table: &Table, value: &T, record_id: usize
+                table: &Table, hash: u64, record_id: usize
             ) -> Result<(), io::Error> {
         let mut id = 1;
         let mut id_next;
@@ -87,7 +97,7 @@ impl<'a, T: 'a + Copy + Clone + PartialOrd> Index<T> {
             while id > 0 {
                 let mut rec = Self::get(table, id)?;
 
-                if *value < rec.value {
+                if hash < rec.hash {
                     id_next = rec.left;
                     if id_next == 0 {
                         rec.left = record_id;
@@ -112,6 +122,7 @@ impl<'a, T: 'a + Copy + Clone + PartialOrd> Index<T> {
 }
 
 
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -124,55 +135,55 @@ mod tests {
     fn test() {
         _ensure_removed_index();
 
-        let index = Table::new::<Index<u8>>(INDEX_PATH);
+        let index = Table::new::<Index>(INDEX_PATH);
 
-        Index::<u8>::add(&index, &32).unwrap();
-        Index::<u8>::add(&index, &33).unwrap();
-        Index::<u8>::add(&index, &12).unwrap();
-        Index::<u8>::add(&index, &90).unwrap();
-        Index::<u8>::add(&index, &32).unwrap();
+        Index::add(&index, &32).unwrap();
+        Index::add(&index, &33).unwrap();
+        Index::add(&index, &12).unwrap();
+        Index::add(&index, &90).unwrap();
+        Index::add(&index, &32).unwrap();
 
         assert_eq!(index.size(), 5);
 
-        let record = Index::<u8>::get(&index, 1).unwrap();
-        assert_eq!(record.left, 3);
-        assert_eq!(record.right, 2);
-        assert_eq!(record.value, 32);
+        let record = Index::get(&index, 1).unwrap();
+        assert_eq!(record.left, 2);
+        assert_eq!(record.right, 3);
+        assert_eq!(record.hash, 12435244753979506696);
 
-        let record = Index::<u8>::get(&index, 2).unwrap();
+        let record = Index::get(&index, 2).unwrap();
+        assert_eq!(record.left, 4);
+        assert_eq!(record.right, 0);
+        assert_eq!(record.hash, 5455878505379436227);
+
+        let record = Index::get(&index, 3).unwrap();
         assert_eq!(record.left, 5);
-        assert_eq!(record.right, 4);
-        assert_eq!(record.value, 33);
+        assert_eq!(record.right, 0);
+        assert_eq!(record.hash, 17877610526930097705);
 
-        let record = Index::<u8>::get(&index, 3).unwrap();
+        let record = Index::get(&index, 4).unwrap();
         assert_eq!(record.left, 0);
         assert_eq!(record.right, 0);
-        assert_eq!(record.value, 12);
+        assert_eq!(record.hash, 4907824628803523476);
 
-        let record = Index::<u8>::get(&index, 4).unwrap();
+        let record = Index::get(&index, 5).unwrap();
         assert_eq!(record.left, 0);
         assert_eq!(record.right, 0);
-        assert_eq!(record.value, 90);
+        assert_eq!(record.hash, 12435244753979506696);
 
-        let record = Index::<u8>::get(&index, 5).unwrap();
-        assert_eq!(record.left, 0);
-        assert_eq!(record.right, 0);
-        assert_eq!(record.value, 32);
-
-        assert_eq!(Index::<u8>::search_one(&index, &90).unwrap(), 4);
+        assert_eq!(Index::search_one(&index, &90).unwrap(), 4);
 
         assert_eq!(
-            Index::<u8>::search_many(&index, &32).collect::<Vec<usize>>(),
+            Index::search_many(&index, &32).collect::<Vec<usize>>(),
             vec![1, 5]
         );
 
         assert_eq!(
-            Index::<u8>::search_many(&index, &33).collect::<Vec<usize>>(),
+            Index::search_many(&index, &33).collect::<Vec<usize>>(),
             vec![2]
         );
 
         assert_eq!(
-            Index::<u8>::search_many(&index, &35).collect::<Vec<usize>>(),
+            Index::search_many(&index, &35).collect::<Vec<usize>>(),
             vec![]
         );
 

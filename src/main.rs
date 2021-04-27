@@ -76,7 +76,7 @@ impl LbaseExample {
             person_table: Table::new::<Person>(
                 format!("{}/person.tbl", path).as_str()
             ),
-            person_index_age: Table::new::<Index<u8>>(
+            person_index_age: Table::new::<Index>(
                 format!("{}/person-index-age.idx", path).as_str()
             ),
             person_heap_about: Heap::new(
@@ -98,7 +98,7 @@ fn main() {
         );
     }
 
-    for (id, obj) in Index::<u8>::all(&db.person_index_age) {
+    for (id, obj) in Index::all(&db.person_index_age) {
         println!("{} {:?}", id, obj);
     }
 
